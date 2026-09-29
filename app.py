@@ -122,7 +122,11 @@ def main():
 
     # Sidebar Footer
     st.sidebar.markdown("---")
-    st.sidebar.caption("v1.0.0 | Persistent SQLite Storage")
+    if database.is_supabase_active():
+        st.sidebar.success("🟢 **Storage**: Supabase Cloud DB")
+    else:
+        st.sidebar.info("🟡 **Storage**: Local SQLite DB")
+    st.sidebar.caption("v1.0.0 | CSR IT Ticket Tracker")
 
 if __name__ == "__main__":
     main()
