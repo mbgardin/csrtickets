@@ -219,21 +219,70 @@ def ticket_id_exists(ticket_id: str) -> bool:
         cursor.execute("SELECT 1 FROM tickets WHERE ticket_id = ?;", (ticket_id,))
         return cursor.fetchone() is not None
 
+def ensure_supabase_employee_id(employee_id: int) -> int:
+    """
+    Ensure the employee exists in Supabase employees table and return the valid Supabase employee ID.
+    Prevents FOREIGN KEY constraint failures when IDs differ between local SQLite and Supabase.
+    """
+    client = get_supabase_client()
+    if not client:
+        return employee_id
+        
+    # 1. Check if employee_id exists in Supabase
+    try:
+        res = client.table("employees").select("id").eq("id", employee_id).execute()
+        if res.data:
+            return res.data[0]["id"]
+    except Exception:
+        pass
+
+    # 2. Get employee name from local SQLite if ID mismatch
+    emp_name = None
+    try:
+        with get_sqlite_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM employees WHERE id = ?;", (employee_id,))
+            row = cursor.fetchone()
+            if row:
+                emp_name = row["name"]
+    except Exception:
+        pass
+
+    if not emp_name:
+        emp_name = "IT Support Tech"
+
+    # 3. Find or auto-create employee in Supabase by name
+    try:
+        res_by_name = client.table("employees").select("id").eq("name", emp_name).execute()
+        if res_by_name.data:
+            return res_by_name.data[0]["id"]
+            
+        ins_res = client.table("employees").insert({"name": emp_name, "active": 1}).execute()
+        if ins_res.data:
+            return ins_res.data[0]["id"]
+    except Exception:
+        pass
+        
+    return employee_id
+
 def add_ticket(ticket_id: str, helped_person: str, issue: str, employee_id: int, resolution: str, created_at: str) -> bool:
     """Insert a new ticket into database."""
-    ticket_payload = {
-        "ticket_id": ticket_id,
-        "created_at": created_at,
-        "helped_person": helped_person.strip(),
-        "issue": issue.strip(),
-        "employee_id": employee_id,
-        "resolution": resolution.strip()
-    }
-
     if is_supabase_active():
         try:
             client = get_supabase_client()
+            # Ensure valid Supabase employee ID to avoid foreign key failure
+            valid_emp_id = ensure_supabase_employee_id(employee_id)
+            
+            ticket_payload = {
+                "ticket_id": ticket_id,
+                "created_at": created_at,
+                "helped_person": helped_person.strip(),
+                "issue": issue.strip(),
+                "employee_id": valid_emp_id,
+                "resolution": resolution.strip()
+            }
             client.table("tickets").insert(ticket_payload).execute()
+            
             # Sync to local SQLite as backup
             with get_sqlite_connection() as conn:
                 conn.execute("""
@@ -256,17 +305,17 @@ def add_ticket(ticket_id: str, helped_person: str, issue: str, employee_id: int,
 
 def update_ticket(ticket_id: str, helped_person: str, issue: str, employee_id: int, resolution: str, updated_at: str) -> bool:
     """Update existing ticket details."""
-    update_payload = {
-        "helped_person": helped_person.strip(),
-        "issue": issue.strip(),
-        "employee_id": employee_id,
-        "resolution": resolution.strip(),
-        "updated_at": updated_at
-    }
-
     if is_supabase_active():
         try:
             client = get_supabase_client()
+            valid_emp_id = ensure_supabase_employee_id(employee_id)
+            update_payload = {
+                "helped_person": helped_person.strip(),
+                "issue": issue.strip(),
+                "employee_id": valid_emp_id,
+                "resolution": resolution.strip(),
+                "updated_at": updated_at
+            }
             client.table("tickets").update(update_payload).eq("ticket_id", ticket_id).execute()
         except Exception as e:
             st.warning(f"Supabase update error: {str(e)}")
